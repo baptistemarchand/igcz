@@ -4,35 +4,48 @@ Layout. The first part is bytes, every number written with codec.encode_number:
 
     "IGCZ" version
     line ending              0 = "\\n", 1 = "\\r\\n"
-    other lines              count, then their positions (as changes), then their texts
+    other lines              count, then their texts: lengths flag (+ lengths), size,
+                             texts joined by "\\n" and deflated with primer.txt as a
+                             preset dictionary (their positions are in the coded part)
     fix count
     invalid fixes            count, then their indexes (as changes)
-    extension fields         mode 1: one text per fix (lines of different lengths)
-                             mode 0: field count, then per field: width, kind
-                                     (kind 0 = number, stored in the coded part;
-                                      kind 1 = raw text, stored here)
+    extension fields         mode 0 (fields from the I-record): field count, then per
+                                     field: width, kind (0 = number, 1 = text)
+                             mode 1 (no field layout fits): nothing
+                             then size + deflated text: text fields (mode 0), or all
+                             tails (mode 1)
 
 The second part is one arithmetic-coded stream (see arith.py), each column
 with its own learned probabilities:
 
     time, lat, lng, pressure_alt, gnss_alt     guess "same change as last time"
-    each number extension field                guess "same value as last time"
+    mode 0: fields present on each fix,        guess "same value as last time"
+            then each number field (only on the fixes that have it)
+    mode 1: tail length of each fix
+    position of each other line (index of the fix it comes before)
 
 "Other lines" are every line that is not a regular B-line (headers, events,
 signature, malformed B-lines), kept as raw text with the index of the fix they
 come before, so the file can be rebuilt exactly.
 """
 
+import zlib
+from itertools import accumulate
+from pathlib import Path
+
 from arith import RangeDecoder, RangeEncoder, read_column, write_column
 from codec import decode_number, encode_number
 from igc import Fix, format_b, is_midnight_rollover, parse_b
 
 MAGIC = b"IGCZ"
-VERSION = 3
+VERSION = 6
+# Typical header text known to both sides (see make_primer.py). Part of the format:
+# a new primer needs a new VERSION, or older files would no longer decode.
+PRIMER = (Path(__file__).parent / "primer.txt").read_bytes()
 TAIL_START = 35  # index in a B-line where the extension fields begin
 COLUMNS = ("time", "lat", "lng", "pressure_alt", "gnss_alt")
-DIGITS = set("0123456789")
 NUMBER, RAW = 0, 1
+MAX_NUMBER_WIDTH = 12  # wider fields stay text: their values could overflow the coder
 
 
 class UnsupportedFlight(Exception):
@@ -84,6 +97,46 @@ class Reader:
         return self.raw(self.num())
 
 
+def _deflate(data):
+    c = zlib.compressobj(9, zlib.DEFLATED, -15, zdict=PRIMER)  # -15: raw deflate, no header or checksum
+    return c.compress(data) + c.flush()
+
+
+def _inflate(data):
+    d = zlib.decompressobj(-15, zdict=PRIMER)
+    return d.decompress(data) + d.flush()
+
+
+def _write_texts(w, lines):
+    """Lines joined by "\\n" and deflated with the primer, so common header phrases cost almost nothing."""
+    # With "\r\n" line endings a line may contain a lone "\n"; then joining is ambiguous, so store the lengths.
+    with_lengths = any("\n" in line for line in lines)
+    w.num(1 if with_lengths else 0)
+    if with_lengths:
+        for line in lines:
+            w.num(len(line))
+    packed = _deflate("\n".join(lines).encode("latin-1"))
+    w.num(len(packed))
+    w.buf += packed
+
+
+def _read_texts(r, count):
+    with_lengths = r.num() == 1
+    lengths = [r.num() for _ in range(count)] if with_lengths else None
+    size = r.num()
+    text = _inflate(r.data[r.pos : r.pos + size]).decode("latin-1")
+    r.pos += size
+    if count == 0:
+        return []
+    if not with_lengths:
+        return text.split("\n")
+    lines, offset = [], 0
+    for n in lengths:
+        lines.append(text[offset : offset + n])
+        offset += n + 1
+    return lines
+
+
 def _try_parse(line):
     """The Fix for a regular B-line, or None if the line must be kept as raw text."""
     if not line.startswith("B") or len(line) < TAIL_START:
@@ -98,12 +151,11 @@ def _try_parse(line):
     return fix
 
 
-def _tail_widths(other_lines, tail_len):
-    """Widths of the extension fields, read from the I-record. One big field if it does not match."""
-    fallback = [tail_len] if tail_len else []
+def _i_record_widths(other_lines):
+    """Widths of the extension fields declared by the I-record, or None."""
     i_line = next((line for _, line in other_lines if line.startswith("I")), None)
     if i_line is None:
-        return fallback
+        return None
     try:
         widths = []
         expected_start = TAIL_START + 1  # the I-record counts bytes from 1
@@ -111,40 +163,113 @@ def _tail_widths(other_lines, tail_len):
             field = i_line[3 + 7 * k : 10 + 7 * k]
             start, end = int(field[0:2]), int(field[2:4])
             if start != expected_start or end < start:
-                return fallback
+                return None
             widths.append(end - start + 1)
             expected_start = end + 1
     except ValueError:
-        return fallback
-    return widths if sum(widths) == tail_len else fallback
+        return None
+    return widths
+
+
+def _tail_layout(other_lines, tails):
+    """Field widths such that every tail is exactly its first few fields, or None if there is none."""
+    longest = max(map(len, tails), default=0)
+    declared = _i_record_widths(other_lines)
+    candidates = [declared, [longest] if longest else []]
+    if declared is not None and longest > sum(declared):
+        # Some loggers write more than their I-record declares: one extra field for the rest.
+        candidates.insert(1, declared + [longest - sum(declared)])
+    for widths in candidates:
+        if widths is None:
+            continue
+        bounds = set(accumulate(widths, initial=0))
+        if all(len(t) in bounds for t in tails):
+            return widths
+    return None
+
+
+def _format_number(value, width):
+    return f"{value:0{width}d}"  # zero-padded, with the sign inside the width: -34 -> "-0034"
+
+
+def _is_number_field(values, width):
+    if width > MAX_NUMBER_WIDTH:
+        return False
+    try:
+        return all(_format_number(int(v), width) == v for v in values)
+    except ValueError:
+        return False
 
 
 def _write_tail(w, fixes, other_lines):
-    """Write the extension fields' description. Returns the number columns for the coded part."""
-    tails = [f.tail for f in fixes]
-    lengths = {len(t) for t in tails}
-    if len(lengths) > 1:
-        w.num(1)
-        for t in tails:
-            w.text(t)
-        return []
+    """Write the extension layout and raw text. Returns the (name, values) columns for the coded part.
 
-    w.num(0)
-    widths = _tail_widths(other_lines, lengths.pop() if lengths else 0)
-    w.num(len(widths))
-    number_columns = []
+    mode 0: the tails are made of fields (I-record). Each fix stores how many fields it has,
+            number fields go to the coded part, other fields to the deflated text.
+    mode 1: no such layout. Each fix stores its tail length, the text goes deflated.
+    """
+    tails = [f.tail for f in fixes]
+    widths = _tail_layout(other_lines, tails)
+    if widths is None:
+        w.num(1)
+        raw_text, columns = "".join(tails), [("extension lengths", [len(t) for t in tails])]
+    else:
+        w.num(0)
+        w.num(len(widths))
+        field_count = {b: i for i, b in enumerate(accumulate(widths, initial=0))}
+        present = [field_count[len(t)] for t in tails]
+        columns = [("extension field count", present)]
+        raw_parts = []
+        offset = 0
+        for index, width in enumerate(widths):
+            values = [t[offset : offset + width] for t, n in zip(tails, present) if n > index]
+            w.num(width)
+            if _is_number_field(values, width):
+                w.num(NUMBER)
+                columns.append((f"extension {index}", [int(v) for v in values]))
+            else:
+                w.num(RAW)
+                raw_parts += values
+            offset += width
+        raw_text = "".join(raw_parts)
+    packed = _deflate(raw_text.encode("latin-1")) if raw_text else b""  # usually empty: skip deflate's own bytes
+    w.num(len(packed))
+    w.buf += packed
+    return columns
+
+
+def _read_tail(r):
+    """Reads what _write_tail put in the bytes part. Returns (widths and kinds or None, raw text)."""
+    fields = None
+    if r.num() == 0:
+        fields = [(r.num(), r.num()) for _ in range(r.num())]
+    size = r.num()
+    raw_text = _inflate(r.data[r.pos : r.pos + size]).decode("latin-1") if size else ""
+    r.pos += size
+    return fields, raw_text
+
+
+def _decode_tails(dec, count, fields, raw_text):
+    if fields is None:
+        tails, offset = [], 0
+        for n in read_column(dec, count, slope=False):
+            tails.append(raw_text[offset : offset + n])
+            offset += n
+        return tails
+
+    present = read_column(dec, count, slope=False)
+    parts = [[] for _ in range(count)]
     offset = 0
-    for width in widths:
-        values = [t[offset : offset + width] for t in tails]
-        w.num(width)
-        if all(set(v) <= DIGITS for v in values):
-            w.num(NUMBER)
-            number_columns.append([int(v) for v in values])
+    for index, (width, kind) in enumerate(fields):
+        owners = [i for i in range(count) if present[i] > index]
+        if kind == NUMBER:
+            values = [_format_number(v, width) for v in read_column(dec, len(owners), slope=False)]
         else:
-            w.num(RAW)
-            w.buf += "".join(values).encode("latin-1")
-        offset += width
-    return number_columns
+            values = [raw_text[offset + k * width : offset + (k + 1) * width] for k in range(len(owners))]
+            offset += len(owners) * width
+        for i, v in zip(owners, values):
+            parts[i].append(v)
+    return ["".join(p) for p in parts]
 
 
 def encode(raw, sections=None):
@@ -171,9 +296,7 @@ def encode(raw, sections=None):
 
     start = len(w.buf)
     w.num(len(other_lines))
-    w.changes(position for position, _ in other_lines)
-    for _, line in other_lines:
-        w.text(line)
+    _write_texts(w, [line for _, line in other_lines])
     sections["other lines"] = len(w.buf) - start
 
     w.num(len(fixes))
@@ -185,7 +308,7 @@ def encode(raw, sections=None):
     sections["validity"] = len(w.buf) - start
 
     start = len(w.buf)
-    number_columns = _write_tail(w, fixes, other_lines)
+    tail_columns = _write_tail(w, fixes, other_lines)
     sections["extension layout and text"] = len(w.buf) - start
 
     enc = RangeEncoder()
@@ -193,10 +316,13 @@ def encode(raw, sections=None):
         start = enc.size()
         write_column(enc, [getattr(f, name) for f in fixes], slope=True)
         sections[name] = enc.size() - start
-    for index, values in enumerate(number_columns):
+    for name, values in tail_columns:
         start = enc.size()
         write_column(enc, values, slope=False)
-        sections[f"extension {index}"] = enc.size() - start
+        sections[name] = enc.size() - start
+    start = enc.size()
+    write_column(enc, [position for position, _ in other_lines], slope=False)
+    sections["other line positions"] = enc.size() - start
 
     return bytes(w.buf) + enc.finish()
 
@@ -209,31 +335,17 @@ def decode(data):
     eol = "\r\n" if r.num() == 1 else "\n"
 
     other_count = r.num()
-    positions = r.changes(other_count)
-    other_lines = list(zip(positions, (r.text() for _ in range(other_count))))
+    other_texts = _read_texts(r, other_count)
 
     count = r.num()
     invalid = set(r.changes(r.num()))
 
-    tails = None
-    fields = []  # (width, values or None when the values are in the bitstream)
-    if r.num() == 1:
-        tails = [r.text() for _ in range(count)]
-    else:
-        for _ in range(r.num()):
-            width = r.num()
-            values = [r.raw(width) for _ in range(count)] if r.num() == RAW else None
-            fields.append((width, values))
+    fields, raw_text = _read_tail(r)
 
     dec = RangeDecoder(data, r.pos)
     columns = {name: read_column(dec, count, slope=True) for name in COLUMNS}
-    if tails is None:
-        parts = []
-        for width, values in fields:
-            if values is None:
-                values = [f"{v:0{width}d}" for v in read_column(dec, count, slope=False)]
-            parts.append(values)
-        tails = ["".join(p) for p in zip(*parts)] if parts else [""] * count
+    tails = _decode_tails(dec, count, fields, raw_text)
+    other_lines = list(zip(read_column(dec, other_count, slope=False), other_texts))
 
     lines = []
     k = 0

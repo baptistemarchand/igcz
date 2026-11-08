@@ -142,6 +142,51 @@ class FormatTest(unittest.TestCase):
             "B1159214549168N00614909EA011680130602607",
         ))
 
+    def test_signed_extension_field(self):
+        raw = flight(
+            "I023638VAT3940SIU",
+            "B1159204549164N00614910EA0117001308-0207",
+            "B1159214549168N00614909EA01168013060.2607",  # "0.26" is not a number field value
+        )
+        self.assertRoundTrip(raw)
+        signed_only = flight(
+            "I023638VAT3940SIU",
+            "B1159204549164N00614910EA0117001308-0207",
+            "B1159214549168N00614909EA0116801306+0207",  # "+02" would not rebuild: stays text
+            "B1159224549168N00614909EA0116801306-1107",
+        )
+        self.assertRoundTrip(signed_only)
+
+    def test_fixes_missing_their_last_fields(self):
+        self.assertRoundTrip(flight(
+            HEADER,
+            "B1159204549164N00614910EA011700130802507",
+            "B1159214549168N00614909EA011680130602",
+            "B1159224549168N00614909EA0116801306",
+            "B1159234549168N00614909EA011680130602508",
+        ))
+
+    def test_tail_longer_than_the_i_record(self):
+        self.assertRoundTrip(flight(
+            "I023638FXA3940SIU",
+            "B1045174501032N00104240EA002250022500500600200010813508801234",
+            "B1045184501032N00104240EA002250022500500400320001081023744",
+        ))
+
+    def test_many_blank_lines_are_cheap(self):
+        fixes = [f"B11{m:02d}{s:02d}4549164N00614910EA0117001308" for m in range(10) for s in range(60)]
+        raw = flight(*[line for fix in fixes for line in (fix, "", "", "")])
+        self.assertRoundTrip(raw)
+        self.assertLess(len(encode(raw)), 300)  # 600 fixes and 1,800 blank lines
+
+    def test_tails_that_fit_no_field_layout(self):
+        self.assertRoundTrip(flight(
+            HEADER,
+            "B1159204549164N00614910EA011700130802507",
+            "B1159214549168N00614909EA0116801306025",
+            "B1159224549168N00614909EA01168013060",
+        ))
+
     def test_extensions_of_different_lengths(self):
         self.assertRoundTrip(flight(
             HEADER,
@@ -152,6 +197,19 @@ class FormatTest(unittest.TestCase):
     def test_no_fixes(self):
         self.assertRoundTrip(flight(HEADER))
         self.assertRoundTrip(b"")
+
+    def test_lone_line_feed_inside_a_crlf_file(self):
+        self.assertRoundTrip(flight(
+            HEADER,
+            "LXSRcomment with a lone\nline feed",
+            "B1159204549164N00614910EA011700130802507",
+            "",
+            eol="\r\n",
+        ))
+
+    def test_common_headers_compress_well(self):
+        headers = flight("HFDTM100GPSDATUM:WGS-1984", "HFFXA035", "HFPLTPILOTINCHARGE:", "HFGIDGLIDERID:")
+        self.assertLess(len(encode(headers)), len(headers) // 2)
 
     def test_non_ascii_header(self):
         self.assertRoundTrip(flight("HFPLTPILOT:Jérôme", "B1159204549164N00614910EA0117001308"))

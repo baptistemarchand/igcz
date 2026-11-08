@@ -1,6 +1,9 @@
-"""Download a random sample of flights from the Open IGC Database into data/flights/.
+"""Download a small random sample of flights from the Open IGC Database API into data/flights/.
 
 usage: python3 download.py [count]   (default 300; already downloaded files are skipped)
+
+Handy without the full corpus. With a local copy of the corpus, prefer corpus.py
+(bench.py --corpus), which samples the whole database.
 """
 
 import gzip
@@ -31,7 +34,7 @@ def main():
     DEST.mkdir(parents=True, exist_ok=True)
 
     total = json.loads(get(f"{API}?limit=1"))["total"]
-    # A fixed seed keeps the sample reproducible; several random pages spread it over the whole database.
+    # A fixed seed keeps the sample reproducible; several random pages spread it over the database.
     rng = random.Random(42)
     pages = max(1, count // 200)
     urls = []
