@@ -9,10 +9,11 @@ Layout. The first part is bytes, every number written with codec.encode_number:
     invalid fixes            count, then their indexes (as changes)
     extension fields         mode 1: one text per fix (lines of different lengths)
                              mode 0: field count, then per field: width, kind
-                                     (kind 0 = number, stored in the bitstream;
+                                     (kind 0 = number, stored in the coded part;
                                       kind 1 = raw text, stored here)
 
-The second part is one bitstream (see bits.py), padded to a whole byte:
+The second part is one arithmetic-coded stream (see arith.py), each column
+with its own learned probabilities:
 
     time, lat, lng, pressure_alt, gnss_alt     guess "same change as last time"
     each number extension field                guess "same value as last time"
@@ -22,12 +23,12 @@ signature, malformed B-lines), kept as raw text with the index of the fix they
 come before, so the file can be rebuilt exactly.
 """
 
-from bits import BitReader, BitWriter, read_column, write_column
+from arith import RangeDecoder, RangeEncoder, read_column, write_column
 from codec import decode_number, encode_number
 from igc import Fix, format_b, is_midnight_rollover, parse_b
 
 MAGIC = b"IGCZ"
-VERSION = 2
+VERSION = 3
 TAIL_START = 35  # index in a B-line where the extension fields begin
 COLUMNS = ("time", "lat", "lng", "pressure_alt", "gnss_alt")
 DIGITS = set("0123456789")
@@ -119,7 +120,7 @@ def _tail_widths(other_lines, tail_len):
 
 
 def _write_tail(w, fixes, other_lines):
-    """Write the extension fields' description. Returns the number columns for the bitstream."""
+    """Write the extension fields' description. Returns the number columns for the coded part."""
     tails = [f.tail for f in fixes]
     lengths = {len(t) for t in tails}
     if len(lengths) > 1:
@@ -187,17 +188,17 @@ def encode(raw, sections=None):
     number_columns = _write_tail(w, fixes, other_lines)
     sections["extension layout and text"] = len(w.buf) - start
 
-    bw = BitWriter()
+    enc = RangeEncoder()
     for name in COLUMNS:
-        start = bw.bit_length()
-        write_column(bw, [getattr(f, name) for f in fixes], slope=True)
-        sections[name] = (bw.bit_length() - start) / 8
+        start = enc.size()
+        write_column(enc, [getattr(f, name) for f in fixes], slope=True)
+        sections[name] = enc.size() - start
     for index, values in enumerate(number_columns):
-        start = bw.bit_length()
-        write_column(bw, values, slope=False)
-        sections[f"extension {index}"] = (bw.bit_length() - start) / 8
+        start = enc.size()
+        write_column(enc, values, slope=False)
+        sections[f"extension {index}"] = enc.size() - start
 
-    return bytes(w.buf) + bw.finish()
+    return bytes(w.buf) + enc.finish()
 
 
 def decode(data):
@@ -224,13 +225,13 @@ def decode(data):
             values = [r.raw(width) for _ in range(count)] if r.num() == RAW else None
             fields.append((width, values))
 
-    br = BitReader(data, r.pos)
-    columns = {name: read_column(br, count, slope=True) for name in COLUMNS}
+    dec = RangeDecoder(data, r.pos)
+    columns = {name: read_column(dec, count, slope=True) for name in COLUMNS}
     if tails is None:
         parts = []
         for width, values in fields:
             if values is None:
-                values = [f"{v:0{width}d}" for v in read_column(br, count, slope=False)]
+                values = [f"{v:0{width}d}" for v in read_column(dec, count, slope=False)]
             parts.append(values)
         tails = ["".join(p) for p in zip(*parts)] if parts else [""] * count
 
