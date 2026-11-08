@@ -1,0 +1,33 @@
+{
+  "name": "@baptistemrchnd/igcz",
+  "version": "0.1.0",
+  "description": "Compact, byte-exact encoding of IGC flight logs (about 20x smaller than IGC). WebAssembly build of the Zig library.",
+  "keywords": ["igc", "igcz", "paragliding", "gliding", "gps", "flight-log", "compression", "wasm"],
+  "license": "0BSD",
+  "author": "Baptiste Marchand",
+  "homepage": "https://baptistemarchand.github.io/igcz/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/baptistemarchand/igcz.git",
+    "directory": "npm"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": ["index.js", "index.d.ts", "igcz-wasm.js", "LICENSE", "README.md"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "cd .. && zig build wasm && cd npm && node build.js",
+    "test": "node --test",
+    "prepack": "npm run build"
+  }
+}

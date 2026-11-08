@@ -35,6 +35,21 @@ exe.root_module.addImport("igcz", igcz.module("igcz"));
 
 Requires Zig 0.16. No C dependencies.
 
+## JavaScript
+
+```sh
+npm install @baptistemrchnd/igcz
+```
+
+```js
+import { encode, decode } from "@baptistemrchnd/igcz";
+
+const packed = await encode(igcBytesOrString);
+const igc = await decode(packed);
+```
+
+It is the same WebAssembly build as the web converter, packed in one ES module. See [`npm/`](npm/README.md).
+
 ## Command line
 
 Install on Linux or macOS:

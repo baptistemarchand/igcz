@@ -7,6 +7,7 @@ IGCZ: a compact, byte-exact encoding of IGC flight logs (paragliding GPS tracks)
 - `experiments/`: Python reference implementation and analysis tools. `igcz.py` defines the format.
 - `src/`: Zig library (`igcz.zig`) and CLI (`main.zig`). Must read and write the same files as the Python one.
 - `web/`: static converter page for GitHub Pages, runs `src/wasm.zig` (built by `zig build wasm`, not committed).
+- `npm/`: the `@baptistemrchnd/igcz` npm package, a JS wrapper around the same wasm (`npm run build` there embeds it, `npm test` cross-checks with the Zig CLI). Its `version` must equal the release tag.
 - `experiments/primer.txt`: deflate preset dictionary, shared by both (embedded in Zig via `build.zig`).
 
 ## Commands

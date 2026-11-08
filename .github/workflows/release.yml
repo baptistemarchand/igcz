@@ -33,3 +33,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+
+  npm:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Check that the package version matches the tag
+        run: test "v$(node -p "require('./npm/package.json').version")" = "$GITHUB_REF_NAME"
+      - run: zig build -Doptimize=ReleaseFast
+      - run: cd npm && npm run build && npm test
+      # Trusted publishing (OIDC) needs npm 11.5.1 or later; no token is stored anywhere.
+      - run: npm install -g npm@latest
+      - run: cd npm && npm publish --access public
