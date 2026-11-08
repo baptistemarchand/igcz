@@ -37,7 +37,13 @@ Requires Zig 0.16. No C dependencies.
 
 ## Command line
 
-Prebuilt binaries for Linux, macOS and Windows are on the [releases page](https://github.com/baptistemarchand/igcz/releases). To build from source:
+Install on Linux or macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/baptistemarchand/igcz/main/install.sh | sh
+```
+
+It installs to `~/.local/bin` (set `IGCZ_INSTALL_DIR` to change it, `IGCZ_VERSION` to pin a version) and checks the SHA-256 of the download. Windows builds are on the [releases page](https://github.com/baptistemarchand/igcz/releases). To build from source:
 
 ```sh
 zig build -Doptimize=ReleaseFast
