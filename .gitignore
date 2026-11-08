@@ -3,3 +3,4 @@ experiments/results/
 __pycache__/
 .zig-cache/
 zig-out/
+web/igcz.wasm

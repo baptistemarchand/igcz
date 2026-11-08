@@ -34,6 +34,15 @@ zig build -Doptimize=ReleaseFast
 
 About 100 MB of IGC per second to encode and 200 MB/s to decode, on one thread.
 
+## Web converter
+
+`web/` is a static page that converts files in the browser with a WebAssembly build of the library. It is deployed to GitHub Pages on every push to `main`.
+
+```sh
+zig build wasm                          # writes web/igcz.wasm
+python3 -m http.server -d web           # then open http://localhost:8000
+```
+
 ## Experiments
 
 `experiments/` holds the Python reference implementation and the benchmarks used to design the format.
