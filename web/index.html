@@ -17,6 +17,7 @@
     --ok: #1f7a4a;
     --err: #b3261e;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --bar: #8f8d85;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -29,6 +30,7 @@
       --accent-soft: #1f2a3d;
       --ok: #5cc28c;
       --err: #f08a80;
+      --bar: #6f6e67;
     }
   }
   * { box-sizing: border-box; }
@@ -44,6 +46,30 @@
   .lead { color: var(--muted); margin: 0 0 28px; font-size: 1.05rem; }
   code { font-family: var(--mono); font-size: 0.9em; }
   a { color: var(--accent); }
+
+  .bench { margin: 0 0 32px; }
+  .bench table { width: 100%; border-collapse: collapse; }
+  .bench th {
+    width: 6.5em; padding: 5px 12px 5px 0;
+    text-align: left; font-weight: 500; font-size: 0.95rem; white-space: nowrap;
+  }
+  .bench td { padding: 5px 0; }
+  .bench .track { display: flex; align-items: center; gap: 8px; }
+  /* Bars share one linear scale; room is kept on the right for the value label. */
+  .bench .bar {
+    width: calc((100% - 7.5em) * var(--v) / var(--max));
+    min-width: 2px; height: 18px;
+    border-radius: 0 4px 4px 0;
+    background: var(--bar);
+  }
+  .bench tr.igcz .bar { background: var(--ok); }
+  .bench .value { font-size: 0.9rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bench tr.igcz th, .bench tr.igcz .value { font-weight: 700; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .bench h2 { margin: 0 0 12px; }
+  .bench figure { margin: 0 0 24px; }
+  .bench h3 { font-size: 1rem; margin: 0 0 2px; }
+  .bench figcaption p { margin: 0 0 8px; color: var(--muted); font-size: 0.9rem; }
 
   #drop {
     display: block;
@@ -96,7 +122,80 @@
 <body>
 <main>
   <h1>IGCZ</h1>
-  <p class="lead">A compact, byte-exact encoding of IGC files. About 20&times; smaller than IGC</p>
+  <p class="lead">A compact, byte-exact encoding of IGC files. About <span style="color: var(--ok)">20&times; smaller</span> than IGC.</p>
+
+  <section class="bench">
+    <h2>Benchmarks</h2>
+    <figure>
+      <figcaption>
+        <h3>Size</h3>
+        <p>Total size of a sample of 185k flights :</p>
+      </figcaption>
+      <table style="--max: 64.51">
+        <caption class="visually-hidden">Total size of the Open IGC Database in each format</caption>
+        <tr title="64.51 GB">
+          <th scope="row">IGC</th>
+          <td><div class="track"><div class="bar" style="--v: 64.51"></div><span class="value">64.5 GB</span></div></td>
+        </tr>
+        <tr title="15.48 GB, 4.2× smaller than IGC">
+          <th scope="row">IGC + gzip</th>
+          <td><div class="track"><div class="bar" style="--v: 15.48"></div><span class="value">15.5 GB</span></div></td>
+        </tr>
+        <tr title="7.2 GB, 9× smaller than IGC">
+          <th scope="row">IGC + xz</th>
+          <td><div class="track"><div class="bar" style="--v: 7.22"></div><span class="value">7.2 GB</span></div></td>
+        </tr>
+        <tr class="igcz" title="2.76 GB, 23.3× smaller than IGC">
+          <th scope="row">IGCZ</th>
+          <td><div class="track"><div class="bar" style="--v: 2.76"></div><span class="value">2.76 GB</span></div></td>
+        </tr>
+      </table>
+    </figure>
+    <figure>
+      <figcaption>
+        <h3>Encode speed</h3>
+        <p>MB of IGC per second, one thread on an Apple M3 Pro, 300 flights (gzip and xz at their default levels) :</p>
+      </figcaption>
+      <table style="--max: 100.3">
+        <caption class="visually-hidden">Encode speed, MB of IGC per second</caption>
+        <tr title="32.4 MB/s">
+          <th scope="row">gzip</th>
+          <td><div class="track"><div class="bar" style="--v: 32.4"></div><span class="value">32 MB/s</span></div></td>
+        </tr>
+        <tr title="8.1 MB/s">
+          <th scope="row">xz</th>
+          <td><div class="track"><div class="bar" style="--v: 8.1"></div><span class="value">8 MB/s</span></div></td>
+        </tr>
+        <tr class="igcz" title="100.3 MB/s">
+          <th scope="row">IGCZ</th>
+          <td><div class="track"><div class="bar" style="--v: 100.3"></div><span class="value">100 MB/s</span></div></td>
+        </tr>
+      </table>
+    </figure>
+    <figure>
+      <figcaption>
+        <h3>Decode speed</h3>
+        <p>MB of IGC per second, one thread on an Apple M3 Pro, 300 flights (gzip and xz at their default levels) :</p>
+      </figcaption>
+      <table style="--max: 1323.8">
+        <caption class="visually-hidden">Decode speed, MB of IGC per second</caption>
+        <tr title="1,323.8 MB/s">
+          <th scope="row">gzip</th>
+          <td><div class="track"><div class="bar" style="--v: 1323.8"></div><span class="value">1,324 MB/s</span></div></td>
+        </tr>
+        <tr title="135.2 MB/s">
+          <th scope="row">xz</th>
+          <td><div class="track"><div class="bar" style="--v: 135.2"></div><span class="value">135 MB/s</span></div></td>
+        </tr>
+        <tr class="igcz" title="217.4 MB/s">
+          <th scope="row">IGCZ</th>
+          <td><div class="track"><div class="bar" style="--v: 217.4"></div><span class="value">217 MB/s</span></div></td>
+        </tr>
+      </table>
+    </figure>
+  </section>
+
+  <h2>Try it</h2>
 
   <label id="drop">
     <input id="file" type="file" multiple accept=".igc,.igcz,.gz,.IGC">
@@ -105,13 +204,6 @@
   </label>
   <ul id="results" aria-live="polite"></ul>
   <p class="note">Files never leave your computer: conversion runs in your browser (WebAssembly build of the Zig library).</p>
-
-  <h2>How it works</h2>
-  <ul class="points">
-    <li><strong>Each column (time,lat,lng,altitude) predicts its next value.</strong> Positions and altitudes guess "same change as last time", extensions guess "same value as last time".</li>
-    <li><strong>An adaptive arithmetic coder stores the errors.</strong> Smooth flight makes small, regular errors, which often cost well under one bit.</li>
-    <li><strong>Everything else stays text.</strong> Headers, events, signature and malformed lines are kept verbatim and deflated with a preset dictionary of common header text.</li>
-  </ul>
 
   <footer><a href="https://github.com/baptistemarchand/igcz">Source on GitHub</a></footer>
 </main>
