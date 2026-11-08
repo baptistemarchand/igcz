@@ -21,9 +21,23 @@ const igc = try igcz.decode(gpa, packed);
 defer gpa.free(igc);
 ```
 
+Add it to your project:
+
+```sh
+zig fetch --save git+https://github.com/baptistemarchand/igcz#v0.1.0
+```
+
+```zig
+// build.zig
+const igcz = b.dependency("igcz", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("igcz", igcz.module("igcz"));
+```
+
 Requires Zig 0.16. No C dependencies.
 
 ## Command line
+
+Prebuilt binaries for Linux, macOS and Windows are on the [releases page](https://github.com/baptistemarchand/igcz/releases). To build from source:
 
 ```sh
 zig build -Doptimize=ReleaseFast
@@ -33,6 +47,10 @@ zig build -Doptimize=ReleaseFast
 ```
 
 About 100 MB of IGC per second to encode and 200 MB/s to decode, on one thread.
+
+## License
+
+[0BSD](LICENSE): do whatever you want, no attribution required.
 
 ## Web converter
 

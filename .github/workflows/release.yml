@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: zig build test
+      - name: Build binaries for every target
+        run: |
+          set -eu
+          mkdir dist
+          for t in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            name="igcz-${GITHUB_REF_NAME}-$t"
+            zig build -Doptimize=ReleaseFast -Dtarget="$t" --prefix "build/$name"
+            case "$t" in
+              *windows) (cd build && zip -qr "../dist/$name.zip" "$name") ;;
+              *) tar -C build -czf "dist/$name.tar.gz" "$name" ;;
+            esac
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
